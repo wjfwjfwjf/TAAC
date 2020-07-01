@@ -1,0 +1,268 @@
+#用于将每个用户读的creative_id变为一个句子的函数
+def f(x) :
+    word = []
+    x = list(x)
+    for i in range(len(x)) :
+        word.append(str(x[i]))
+    return word
+#word2vec函数
+from gensim.models import Word2Vec
+def word_vec(train_df,num,feat,cou,flag = 0) :
+    seq = train_df.groupby("user_id")[feat].apply(f)
+    b = train_df[["user_id"]].copy()
+    a = b.drop_duplicates(subset=['user_id'], keep='last')
+    a.index = [i for i in range(len(a))]
+    print(a.index)
+    print(a.head(5))
+    seq = seq.values
+    print(len(seq))
+    if flag == 0 :
+        model = Word2Vec(seq,min_count = cou,size = num)
+        model.save("model_"+feat)
+    else :
+        model = Word2Vec.load("model_"+feat)
+    word_list = set(model.wv.index2word)
+    print(len(word_list))
+    result = []
+    print(len(seq))
+    for i in range(len(a)) :
+        ans = [0 for k in range(num)]
+        n = len(seq[i])
+        for j in range(len(seq[i])) :
+            if seq[i][j] in word_list :
+                ans += model[seq[i][j]]
+            else :
+                n -= 1
+        if n != 0 :
+            ans /= n
+        result.append(ans)
+    result_1 = pd.DataFrame(index = [i for i in range(len(a))],data = result,columns = [(str(feat)+"_"+str(i)) for i in range(num)])
+    result_1 = pd.concat([result_1,a],axis = 1)
+    return result_1
+
+#这是用来找特征的代码，因为one——hot后数据维度爆炸，所以我打算找那些出现次数最多和与训练集标签的分布最不同的（包含更多信息），最后发现没啥用
+rec = []
+rec_feats = []
+rec_nums = []
+def feature (df_1) :
+#    print(df_1.info())
+    feats = ["product_category"]
+    nums = [100000,]
+    for i,feat in enumerate(feats) :
+        a = df_1.groupby(by = feat)['age'].value_counts()
+#        d = pd.DataFrame(index = a.index.levels[0],columns = a.index.levels[1],data = a)
+#        print(d)
+#        print()
+#        print(type(a))
+#        a.reset_index()
+        d = a.index.levels[0]
+        b = df_1.groupby(by = feat)['age'].count()
+#        print(b)
+#        print(b.values[1])
+        nums = []
+        for j,s in enumerate(d) :
+            if b.values[j]<100000 :
+                continue
+            '''
+            e = a.loc[s]
+            e = e.sort_index()
+            e.to_frame()
+            f = pd.Series(index = [i for i in range(1,11,1)])
+            for x,y in enumerate(e.index) :
+                f[y] = e[y] 
+            f = f.fillna(0)         
+            f /= b.values[j]
+#            sns.lineplot(data = f.values)
+#            plt.show()
+#            sns.lineplot(data = c.values)
+#            plt.show()
+            print(b.values[j])
+#            print(f)
+#            print(feat)
+#            print(s)
+#            measure(f,c)           
+#            print(a[j])
+#            if measure(f,c) > 0.01 :
+            '''
+            rec.append(str(feat) + "_" + str(s))
+            rec_feats.append(feat)
+            rec_nums.append(s)
+feature(train_df)
+
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+import gc
+train_ad = pd.read_csv("data/data41182/ad.csv")
+train_click = pd.read_csv("data/data41182/click_log.csv")
+train_user = pd.read_csv("data/data41182/user.csv")
+test_ad = pd.read_csv("data/data41182/test_ad.csv")
+test_click = pd.read_csv("data/data41182/test_click_log.csv")
+
+#合并训练集
+train_df = pd.merge(train_click,train_ad,on = "creative_id",how = 'left')
+train_df = pd.merge(train_df,train_user,on = "user_id",how = 'left')
+
+#返回某个用户中点击的不同产品数
+def f_1(x) :
+    l = list(x)
+    s = set(l)
+    return len(s)
+#生成用于深度学习（或lightgbm）的数据
+def handle (train_df,user,flag = 0) :
+    final = user.copy()
+    train_df = train_df.sort_values("user_id")
+#    train_df = train_data.copy()
+#    final = pd.concat([final,train_user["age"]],join = "outer",axis = 1)
+    
+    for i,feat in enumerate(rec_feats) :
+        a = train_df.groupby(["user_id",feat])["time"].count().reset_index()
+        b = a.loc[a[feat] == rec_nums[i]]
+        a = b[["user_id","time"]]
+        print(a.head(5))
+        a.columns = ["user_id",str(feat)+"_"+str(rec_nums[i])]
+        final = final.merge(a,on = "user_id",how = "left")
+       
+    
+    feats = ["ad_id","creative_id","time","industry","product_id","advertiser_id"]
+    for i,feat in enumerate(feats) :
+        a = train_df.groupby(["user_id"])[feat].apply(f_1).reset_index()
+        a.columns = ["user_id",str(feat)+"_count"]
+        final = final.merge(a,on = "user_id",how = "left")
+    
+    month = [0,30,61,91]
+    for i in range(3) :
+        a = train_df.loc[(train_df["time"] >month[i]) &(train_df["time"] <= month[i+1])]
+        b = a.groupby(by = ["user_id"])["time"].count().reset_index()
+        b.columns = ["user_id","month_"+str(i)+"count"]
+        final = final.merge(b,on = "user_id",how = "left")
+        
+        b = a.groupby(by = ["user_id"])["click_times"].sum().reset_index()
+        b.columns = ["user_id","month"+str(i)+"click_times_sum"]
+        final = final.merge(b,on = "user_id",how = "left")
+    
+    train_df["time"] = train_df["time"].apply(lambda x : x%7)
+    a = train_df.loc[(train_df["time"]>=0) & (train_df["time"]<= 1)]
+    b = a.groupby(by = ["user_id"])["click_times"].count().reset_index()
+    b.columns = ["user_id","week_end_count"]
+    final = final.merge(b,on = "user_id",how = "left")
+    
+    b = a.groupby(by = ["user_id"])["click_times"].sum().reset_index()
+    b.columns = ["user_id","week_end"+"click_times_sum"]
+    final = final.merge(b,on = "user_id",how = "left")
+    print(2)
+    
+    
+    
+    a = train_df.loc[(train_df["time"]>=2) & (train_df["time"]<= 6)]
+    b = a.groupby(by = ["user_id"])["time"].count().reset_index()
+    b.columns = ["user_id","week_day_count"]
+    final = final.merge(b,on = "user_id",how = "left")
+    
+    b = a.groupby(by = ["user_id"])["click_times"].sum().reset_index()
+    b.columns = ["user_id","week_day_"+"click_times_sum"]
+    final = final.merge(b,on = "user_id",how = "left")
+    print(3)
+    
+    
+    
+    for i in range(7) :
+        a = train_df.loc[train_df["time"] == i]
+        b = a.groupby(by = ["user_id"])["time"].count().reset_index()
+        b.columns = ["user_id","day_"+str(i)]
+        final = final.merge(b,on = "user_id",how = "left")
+        
+        b = a.groupby(by = ["user_id"])["click_times"].sum().reset_index()
+        b.columns = ["user_id","day_"+str(i)+"click_times_sum"]
+        final = final.merge(b,on = "user_id",how = "left")
+    print(4)
+    
+    a = train_df.groupby(by = ["user_id"])["click_times"].sum().reset_index()
+    #a = a.drop(["click_times"],axis = 1)
+    a.columns = ["user_id","click_times_sum"]
+    final = final.merge(a,on = "user_id",how = "left")
+    
+    a = train_df.groupby(by = ["user_id"])["click_times"].max().reset_index()
+    #a = a.drop(["click_times"],axis = 1)
+    a.columns = ["user_id","click_times_max"]
+    final = final.merge(a,on = "user_id",how = "left")
+    
+    a = train_df.groupby(by = ["user_id"])["click_times"].count().reset_index()
+    #a = a.drop(["click_times"],axis = 1)
+    a.columns = ["user_id","click_times_count"]
+    final = final.merge(a,on = "user_id",how = "left")
+    
+    final["click_times_freq"] = final["click_times_sum"] / final["click_times_count"]
+                               
+      
+    a = train_df[train_df["click_times"] > 1]
+    b = a.groupby(by = ["user_id"])["click_times"].sum().reset_index()
+    b.columns = ["user_id","ct_bigger_1"]
+    print(type(a))
+    final = final.merge(b,on = "user_id",how = "left")
+    print("word_2")
+    
+    
+    feats_1 = ["ad_id","creative_id","advertiser_id","industry","product_id"]
+    nums = [120,120,40,15,25]
+    n = [50,50,1000,1000,1000]
+    for i,feat in enumerate(feats_1) :
+        tmp = train_df[["user_id",feat]]
+        a = word_vec(tmp,nums[i],feat,n[i],flag)
+        print(a.head(5))
+        print(a.info())
+        final = final.merge(a,on = "user_id",how = "left")
+        print(final.head(5))
+    print("feats_1")                                     
+    final = final.fillna(0)
+    
+    return final
+#    gc.collect()
+#处理训练集数据
+train_1 = handle(train_df,train_user)
+train_1.to_pickle("train_1.csv.zip",compression = "zip")
+#处理测试集数据
+test_user = pd.DataFrame({"user_id":[i for i in range(3000001,4000001,1)]})
+test_df = pd.merge(test_click,test_ad,on = "creative_id",how = 'left')
+test = handle(test_df,test_user,flag = 1)
+test.to_pickle("work/test_1.csv.zip",compression = "zip")
+#划分数据集
+a = train_1["age"]
+a = a.apply(lambda x : x-1)
+train_2 = train_1.drop(["age"],axis = 1)
+from sklearn.model_selection import train_test_split
+x_train, x_test, y_train_1, y_test_1 = train_test_split(train_2,
+                                                    a,
+                                                    test_size = 0.05,
+                                                    random_state = 0,
+                                                    stratify = a)
+#使用lightgbm预测
+import lightgbm as lgb
+lgb_train = lgb.Dataset(x_train, y_train_1)
+lgb_eval = lgb.Dataset(x_test, y_test_1, reference=lgb_train)
+# specify your configurations as a dict
+params = {
+    'boosting_type': 'gbdt',
+    'objective': 'multiclass',
+    'num_class': 10,
+    'metric': 'multi_error',
+    'num_leaves': 300,
+    'min_data_in_leaf': 100,
+    'learning_rate': 0.1,
+    'feature_fraction': 0.8,
+    'bagging_fraction': 0.8,
+    'bagging_freq': 5,
+    'lambda_l1': 0.4,
+    'lambda_l2': 0.5,
+    'min_gain_to_split': 0.2,
+    'verbose': 5,
+    'is_unbalance': True
+}
+
+# train
+
+gbm = lgb.train(params,
+                lgb_train,
+                num_boost_round=3000,
+                valid_sets=lgb_eval,
+                early_stopping_rounds=100)
+preds = gbm.predict(x_test, num_iteration=gbm.best_iteration)                                                    
