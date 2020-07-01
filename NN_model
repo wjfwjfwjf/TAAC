@@ -1,0 +1,142 @@
+import pandas as pd
+import numpy as np
+import os
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+ss = StandardScaler()
+def train_read_age() :
+    train_1 = pd.read_pickle("/kaggle/input/final-train/train__4.csv.xz")
+    print(train_1.head(5))
+    print(train_1.columns)
+#    train_1 = train_1.loc[(train_1["age"] > 1) & (train_1["age"]<8)]#想只在人多的地方分类试试效果
+    a = train_1["age"].apply(lambda x : x- 1 )
+    train_1.head(5)
+    train_1.drop(["gender","age"],axis = 1,inplace = True)
+#    train_1.drop(["age"],axis = 1,inplace = True)
+#    ss.fit(train_1)
+#    train_1 = ss.transform(train_1)
+    x_train, x_test, y_train_1, y_test_1 = train_test_split(train_1,
+                                                    a,
+                                                    test_size = 0.05,
+                                                    random_state = 2020,
+                                                    stratify = a)
+    return x_train, x_test, y_train_1, y_test_1
+    gc.collect()
+def train_read_gender() :
+    train_1 = pd.read_pickle("/kaggle/input/final-train/train__4.csv.xz")
+    print(train_1.info())
+
+    a = train_1["gender"].apply(lambda x : x-1)
+    train_1.drop(["gender"，"age"],axis = 1,inplace = True)
+
+#    ss.fit(train_1)
+#    train_1 = ss.transform(train_1)
+    
+    x_train, x_test, y_train_1, y_test_1 = train_test_split(train_1,
+                                                    a,
+                                                    test_size = 0.05,
+                                                    random_state = 2020,
+                                                    stratify = a)
+    
+    return x_train, x_test, y_train_1, y_test_1
+    gc.collect()
+
+    
+def train_read_both() :#将两个问题变为20分类问题
+    train_1 = pd.read_csv("/kaggle/input/word-vec/train_1.csv",index_col = 0)
+    a = train_1["gender"].apply(lambda x : x-1 )
+    b = train_1["age"].apply(lambda x : x-1 )
+    a = a*10 + b
+    print(a)
+    train_1.drop(["gender","user_id","age"],axis = 1,inplace = True)
+    print(train_1.describe())
+#    ss.fit(train_1)
+#    train_1 = ss.transform(train_1)
+    x_train, x_test, y_train_1, y_test_1 = train_test_split(train_1,
+                                                    a,
+                                                    test_size = 0.05,
+                                                    random_state = 2020,
+                                                    stratify = a)
+    return x_train, x_test, y_train_1, y_test_1
+    gc.collect()
+x_train, x_test, y_train_1, y_test_1= train_read_age()
+
+import keras
+import pandas as pd
+from keras.models import Sequential
+from keras.utils import np_utils
+from keras.layers import Dense, Activation, Flatten, Dropout, BatchNormalization
+from keras import regularizers, optimizers
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+import numpy as np
+from sklearn.metrics import (
+    f1_score, classification_report, confusion_matrix, accuracy_score)
+
+
+
+def model(x_train, x_test, y_train_1, y_test_1,test):
+    num_classes = 10
+    #num_classes = 2
+    y_train = np_utils.to_categorical(y_train_1,num_classes)
+    y_test = np_utils.to_categorical(y_test_1,num_classes)
+    print(y_train.shape)
+    print(y_test.shape)
+    print(y_train)
+    model = Sequential()
+
+
+    model.add(Dense(10000, input_shape=(x_train.shape[1],)))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.5))
+    model.add(BatchNormalization())
+
+    
+    for i in range(1) :
+        model.add(Dense(2048))
+        model.add(Activation('relu'))
+        model.add(Dropout(0.5))
+        model.add(BatchNormalization())
+
+    
+    for i in range(0) :
+        model.add(Dense(1024))
+        model.add(Activation('relu'))
+        model.add(Dropout(0.5))
+        model.add(BatchNormalization())
+
+
+    model.add(Dense(10)) 
+    #model.add(Dense(2)) 
+    model.add(Activation('softmax'))
+
+    batch_size = 512
+    epochs = 1
+    #早期停止
+    es = EarlyStopping(patience=40, monitor='val_accuracy', mode='max')
+    #存储模型
+    mc = ModelCheckpoint('nn_model.h5', 
+                     monitor='val_accuracy', save_best_only=True, mode='max')
+    #梯度下降方法
+    opt = keras.optimizers.rmsprop(lr=0.003,decay=1e-6)
+    #opt = optimizers.SGD(lr=0.1, momentum=0.9)
+    #模型训练
+    model.compile(loss='categorical_crossentropy',
+            optimizer=opt,
+            metrics=['accuracy'])
+
+
+#    model.load_weights('/kaggle/input/model-h5/nn_model.h5')
+    history_0 = model.fit(x_train, y_train, batch_size=batch_size,                      
+                          epochs=epochs,verbose=1,
+                          validation_data=(x_test,y_test),
+                          callbacks=[es,mc])
+    model.load_weights('nn_model.h5')
+    
+    test = pd.read_pickle("/kaggle/input/final_test/test_4.csv.xz")
+    acc = model.predict(x_test)
+    test_result = model.predict(test)
+    test_result = np.argmax(test_result,axis = 1)#提交的结果
+    return acc,test_result
+
+accu,test_result = model(x_train,x_test,y_train_1,y_test_1,test)
